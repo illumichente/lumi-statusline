@@ -59,6 +59,17 @@ Colors: green < 50% < orange < 70% < yellow < 90% < red.
 
 ## Install
 
+**Homebrew (macOS, Linux)**
+
+```bash
+brew install illumichente/lumi/lumi-statusline
+lumi-statusline
+```
+
+`lumi-statusline --uninstall` removes it again; `brew uninstall lumi-statusline` removes the package.
+
+**From source (any platform)**
+
 ```bash
 git clone https://github.com/illumichente/lumi-statusline.git
 cd lumi-statusline
@@ -92,12 +103,6 @@ and only the per-model and `extra` lines disappear.
 macOS (Apple Silicon) and Linux (Ubuntu, uutils coreutils). Windows / Git Bash follows the same GNU
 code path but has not been run by the author yet; if something looks off there, open an issue with the
 output of `echo '{}' | bash ~/.claude/statusline.sh`.
-
-## Credits
-
-Layout and color scheme inspired by
-[kamranahmedse/claude-statusline](https://github.com/kamranahmedse/claude-statusline) (MIT).
-Rewritten from scratch.
 
 ## License
 
