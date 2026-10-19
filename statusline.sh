@@ -3,6 +3,7 @@
 # Input: Claude Code status JSON on stdin (see docs/en/statusline).
 # Network: one GET to api.anthropic.com/api/oauth/usage (extra usage +
 # per-model weekly limit), cached in ~/.claude/cache with mode 600.
+# Runs on macOS, Linux and Windows (Git Bash). Needs bash, jq, curl.
 set -f
 
 input=$(cat)
@@ -20,6 +21,26 @@ magenta=$'\033[38;2;180;140;255m'
 dim=$'\033[2m'
 reset=$'\033[0m'
 sep=" ${dim}│${reset} "
+
+# ── Portability (BSD vs GNU userland) ───────────────────
+if date -j -r 0 +%s >/dev/null 2>&1; then BSD_DATE=1; else BSD_DATE=0; fi
+
+epoch_fmt() {   # epoch strftime-format
+    if [ "$BSD_DATE" = 1 ]; then date -j -r "$1" +"$2" 2>/dev/null
+    else date -d "@$1" +"$2" 2>/dev/null; fi
+}
+file_mtime() {   # GNU stat -f means "file system", so pick by userland, not by failure
+    if [ "$BSD_DATE" = 1 ]; then stat -f %m "$1" 2>/dev/null
+    else stat -c %Y "$1" 2>/dev/null; fi
+}
+next_month_first() {
+    if [ "$BSD_DATE" = 1 ]; then date -v+1m -v1d +"%b %-d" 2>/dev/null
+    else date -d "$(date +%Y-%m-01) +1 month" +"%b %-d" 2>/dev/null; fi
+}
+parent_cmdline() {  # for the --dangerously-skip-permissions flag
+    if [ -r "/proc/$PPID/cmdline" ]; then tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null
+    else ps -o args= -p "$PPID" 2>/dev/null; fi
+}
 
 # ── Helpers ─────────────────────────────────────────────
 color_for_pct() {
@@ -49,8 +70,8 @@ fmt_tokens() {  # 25000 -> 25k, 1000000 -> 1M, 1234567 -> 1.2M
 fmt_clock() {   # epoch -> 11:00pm | oct 20, 6:00am  (second arg "date" adds the day)
     local e=$1 s
     [ -z "$e" ] || [ "$e" = "null" ] || [ "$e" = "0" ] && return
-    if [ "$2" = "date" ]; then s=$(date -j -r "$e" +"%b %-d, %l:%M%p" 2>/dev/null)
-    else s=$(date -j -r "$e" +"%l:%M%p" 2>/dev/null); fi
+    if [ "$2" = "date" ]; then s=$(epoch_fmt "$e" "%b %-d, %l:%M%p")
+    else s=$(epoch_fmt "$e" "%l:%M%p"); fi
     printf '%s' "$s" | sed 's/  */ /g; s/^ //' | tr '[:upper:]' '[:lower:]'
 }
 
@@ -71,8 +92,10 @@ fmt_duration() {    # ms -> 1h12m | 7m | 30s
 }
 
 iso_to_epoch() {    # 2026-10-19T21:00:00.415177+00:00 -> epoch (UTC only, as the API returns)
+    [ -z "$1" ] && return
     local s=${1%%.*}; s=${s%%+*}; s=${s%%Z}
-    env TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$s" +%s 2>/dev/null
+    if [ "$BSD_DATE" = 1 ]; then env TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$s" +%s 2>/dev/null
+    else env TZ=UTC date -d "${s/T/ }" +%s 2>/dev/null; fi
 }
 
 # ── Parse stdin in one jq pass ──────────────────────────
@@ -137,7 +160,7 @@ esac
 flags=()
 [ "$fast" = "true" ] && flags+=("${yellow}⚡fast${reset}")
 [ "$thinking" = "false" ] && flags+=("${dim}🧠off${reset}")
-if [[ "$(ps -o args= -p "$PPID" 2>/dev/null)" == *"--dangerously-skip-permissions"* ]]; then
+if [[ "$(parent_cmdline)" == *"--dangerously-skip-permissions"* ]]; then
     flags+=("${red}⚡skip-perms${reset}")
 fi
 flags_seg=""; for f in "${flags[@]}"; do flags_seg+="${flags_seg:+ · }$f"; done
@@ -163,12 +186,21 @@ cache_dir="$HOME/.claude/cache"
 cache_file="$cache_dir/statusline-usage.json"
 cache_max_age=120
 usage=""
-if [ -f "$cache_file" ] && [ $(( $(date +%s) - $(stat -f %m "$cache_file") )) -lt "$cache_max_age" ]; then
+if [ -f "$cache_file" ] && [ $(( $(date +%s) - $(file_mtime "$cache_file") )) -lt "$cache_max_age" ]; then
     usage=$(cat "$cache_file")
 else
+    # Token sources, first hit wins: env, macOS Keychain, ~/.claude/.credentials.json
+    # (Linux, Windows), libsecret (some Linux setups).
     token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-    if [ -z "$token" ]; then
+    if [ -z "$token" ] && command -v security >/dev/null 2>&1; then
         token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
+                | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    fi
+    if [ -z "$token" ] && [ -r "$HOME/.claude/.credentials.json" ]; then
+        token=$(jq -r '.claudeAiOauth.accessToken // empty' "$HOME/.claude/.credentials.json" 2>/dev/null)
+    fi
+    if [ -z "$token" ] && command -v secret-tool >/dev/null 2>&1; then
+        token=$(timeout 2 secret-tool lookup service "Claude Code-credentials" 2>/dev/null \
                 | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
     fi
     if [ -n "$token" ]; then
@@ -224,7 +256,7 @@ if [ -n "$usage" ]; then
         x_pct=$(awk -v u="$x_used" -v l="$x_limit" 'BEGIN{printf "%d", (l>0)? u*100/l : 0}')
         x_used_fmt=$(awk -v v="$x_used" -v d="$x_dec" 'BEGIN{printf "%.2f", v/(10^d)}')
         x_limit_fmt=$(awk -v v="$x_limit" -v d="$x_dec" 'BEGIN{printf "%.2f", v/(10^d)}')
-        x_reset=$(date -v+1m -v1d +"%b %-d" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        x_reset=$(next_month_first | tr '[:upper:]' '[:lower:]')
         lines+=("$(printf '%s%-7s%s %s %s$%s%s/%s$%s%s %s⟳%s %s%s%s' \
             "$white" "extra" "$reset" "$(build_bar "$x_pct" 10)" \
             "$(color_for_pct "$x_pct")" "$x_used_fmt" "$dim" "$white" "$x_limit_fmt" "$reset" \

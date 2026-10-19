@@ -51,9 +51,11 @@ Colors: green < 50% < orange < 70% < yellow < 90% < red.
 
 ## Requirements
 
-- macOS (reads the Claude Code OAuth token from Keychain, uses BSD `date`)
+- macOS, Linux, or Windows with Git Bash (Claude Code on Windows runs status lines through Git Bash)
 - Claude Code 2.1.251 or newer, claude.ai Pro / Max subscription (for the limit lines)
-- `jq`, `curl` (`brew install jq`)
+- `jq` and `curl`: `brew install jq` / `sudo apt install jq` / `winget install jqlang.jq`
+- Windows: use Windows Terminal or another terminal with Unicode and 24-bit color; the legacy console
+  renders the bars and icons poorly
 
 ## Install
 
@@ -67,19 +69,29 @@ The installer copies `statusline.sh` to `~/.claude/`, backs up any existing stat
 `statusline.sh.bak`, and sets `statusLine` in `~/.claude/settings.json` (with `refreshInterval: 30`
 so countdowns tick while idle). Uninstall with `./install.sh --uninstall`.
 
+On Windows run the three commands inside Git Bash, not PowerShell.
+
 ## Privacy, what the script touches
 
 - **Reads** the JSON Claude Code pipes to it on stdin (model, context, cost, rate limits).
-- **Reads** your Claude Code OAuth token from the macOS Keychain entry `Claude Code-credentials`
-  (or `$CLAUDE_CODE_OAUTH_TOKEN` if set) and sends exactly one request with it, to
+- **Reads** your Claude Code OAuth token from where Claude Code itself stores it: `$CLAUDE_CODE_OAUTH_TOKEN`
+  if set, else the macOS Keychain entry `Claude Code-credentials`, else `~/.claude/.credentials.json`
+  (Linux, Windows), else libsecret via `secret-tool`. It sends exactly one request with it, to
   `https://api.anthropic.com/api/oauth/usage`, at most once per 2 minutes. That is the same endpoint
   Claude Code's own `/usage` command uses. It is the only network call in the file. The token is never
   written to disk.
 - **Writes** the API response to `~/.claude/cache/statusline-usage.json` with mode 600.
-- Runs `git` in the current directory for the branch / dirty marker.
+- Runs `git` in the current directory for the branch / dirty marker, and reads the parent process
+  command line (`/proc` or `ps`) to detect `--dangerously-skip-permissions`.
 
 The limit lines degrade gracefully: if the API call fails, `current` / `weekly` still come from stdin
 and only the per-model and `extra` lines disappear.
+
+## Tested on
+
+macOS (Apple Silicon) and Linux (Ubuntu, uutils coreutils). Windows / Git Bash follows the same GNU
+code path but has not been run by the author yet; if something looks off there, open an issue with the
+output of `echo '{}' | bash ~/.claude/statusline.sh`.
 
 ## Credits
 

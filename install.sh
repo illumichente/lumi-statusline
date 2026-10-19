@@ -14,8 +14,13 @@ if [ "$1" = "--uninstall" ]; then
     echo "done, restart Claude Code"; exit 0
 fi
 
-[ "$(uname)" = "Darwin" ] || { echo "macOS only (uses Keychain and BSD date)"; exit 1; }
-for dep in jq curl; do command -v "$dep" >/dev/null || { echo "missing $dep (brew install $dep)"; exit 1; }; done
+case "$(uname -s)" in
+    Darwin) hint="brew install jq" ;;
+    Linux)  hint="sudo apt install jq   # or your distro's package manager" ;;
+    MINGW*|MSYS*|CYGWIN*) hint="winget install jqlang.jq   # then reopen Git Bash" ;;
+    *) echo "unsupported OS: $(uname -s)"; exit 1 ;;
+esac
+for dep in jq curl; do command -v "$dep" >/dev/null || { echo "missing $dep ($hint)"; exit 1; }; done
 
 mkdir -p "$HOME/.claude"
 [ -f "$DEST" ] && ! cmp -s "$SRC" "$DEST" && cp "$DEST" "$DEST.bak" && echo "backed up existing statusline to statusline.sh.bak"
